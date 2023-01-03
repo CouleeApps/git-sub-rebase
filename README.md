@@ -68,15 +68,12 @@ You need to rebase `D` onto `B` in the submodule, then update `d` and `e` in the
 
 ## Why
 
-Look at how complicated this is, for just 3 commits and 2 submodules! Now imagine doing it across 4+ submodules with upwards of 50 commits.
+Look at how complicated this is, for just 3 commits and 1 submodule! I have to edit a repo that has many tracking submodules that all need to be rebased every time you want to rebase the parent repo, and I often have to rebase branches of 50+ commits against this. (This codebase was definitely not written during an extra long meeting while working on [Binary Ninja](https://github.com/Vector35/binaryninja-api), which has a notoriously submoduley repo structure...)
 
-I have to edit a repo that has many tracking submodules that all need to be rebased every time you want to rebase the parent repo.
 My options were:
 1. Manually handle rebase conflicts on every commit rebased, updating the various submodule pointers for each
 2. Discard submodule history and just rebase all the commits to the tip of the rebased submodule
 3. Write some rust code to do #1 for me :)
-
-Codebase definitely not written during an extra long meeting while working on [Binary Ninja](https://github.com/Vector35/binaryninja-api), which has a notoriously moduley repo structure...
 
 ## How
 
