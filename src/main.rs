@@ -15,7 +15,6 @@ use std::sync::atomic::AtomicBool;
 use git2::ErrorCode::{Applied, Conflict, NotFound};
 use git2::ErrorClass::{Os, Rebase};
 
-// TODO: GPG signing
 // TODO: Continue/abort after a crash
 // TODO: Interactive mode where you can pick/edit/squash/fixup/drop
 
@@ -457,6 +456,10 @@ extern "C" fn sign_commit(
 }
 
 fn multi_rebase_inner(repo: &Repository, _submodule: Option<&Submodule>, target: &Commit, path: &Vec<String>, mut child_results: HashMap<String, HashMap<Oid, Oid>>) -> Result<HashMap<Oid, Oid>> {
+    // ---------------------------------------------------------------------------------------------
+    // The Real Part TM
+    // ---------------------------------------------------------------------------------------------
+
     let named_path = sub_path_to_string(path);
     println!("[{}] Now rebasing", named_path);
     if !child_results.is_empty() {
@@ -706,7 +709,24 @@ fn multi_rebase_inner(repo: &Repository, _submodule: Option<&Submodule>, target:
         // Then just try to commit and see if it works
         let new_id = loop {
             match rebase.commit(None, &repo.signature()?, None) {
-                Ok(id) => break id,
+                Ok(id) => {
+                    // Commit rebased, run post-commit hooks and sign it if possible
+                    let status = Command::new("git")
+                        .arg("commit")
+                        .arg("--amend")
+                        .arg("--no-edit")
+                        .arg("--no-verify")
+                        .current_dir(repo.workdir().expect("Has workdir"))
+                        .spawn()?
+                        .wait()?;
+
+                    if !status.success() {
+                        return Err(anyhow!("Amending commit after rebase pick failed: {:?}", status.code()));
+                    }
+
+                    // The hook could have changed the commit hash
+                    break repo.head()?.peel_to_commit()?.id();
+                },
                 Err(e) if e.code() == Applied && e.class() == Rebase => {
                     // Whatever the last commit is, should be the new id
                     println!("[{}] Commit patch was already applied! Assuming that means we can ignore it.", named_path);
@@ -723,6 +743,7 @@ fn multi_rebase_inner(repo: &Repository, _submodule: Option<&Submodule>, target:
                 }
             }
         };
+
         println!("[{}] Rebased commit {} --> {}", named_path, op.id(), new_id);
         commit_map.insert(op.id(), new_id);
     }
@@ -760,18 +781,6 @@ fn multi_rebase_inner(repo: &Repository, _submodule: Option<&Submodule>, target:
     }
 
     Ok(commit_map)
-}
-
-fn do_rebase(repo: &Repository, target: &Commit) -> Result<()> {
-    // ---------------------------------------------------------------------------------------------
-    // The Real Part TM
-    // ---------------------------------------------------------------------------------------------
-
-    // Rebase!
-    println!("REBASE!! START!!");
-    recurse_subs(&repo, &target, &multi_rebase_inner)?;
-
-    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -840,7 +849,9 @@ fn main() -> Result<()> {
     println!("Press ENTER to begin...");
     let _ = read_stdin()?;
 
-    if let Err(e) = do_rebase(&repo, &target) {
+    // Rebase!
+    println!("REBASE!! START!!");
+    if let Err(e) = recurse_subs(&repo, &target, &multi_rebase_inner) {
         println!("Reverting branches...");
 
         // Revert branches
@@ -859,7 +870,7 @@ fn main() -> Result<()> {
                     println!("[{}] Set HEAD to {}", named_path, branch_name);
                     repo.set_head(&branch_name)?;
                 }
-                println!("[{}] Reset HEAD (hard) to finalized commit {}", named_path, old_head.id());
+                println!("[{}] Reset HEAD (hard) to old commit {}", named_path, old_head.id());
                 repo.reset(&old_head.into_object(), ResetType::Hard, Some(CheckoutBuilder::new().borrow_mut()))?;
             }
 
